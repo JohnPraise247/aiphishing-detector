@@ -1,5 +1,7 @@
 import os
 import logging
+import hashlib
+import base64
 from typing import Dict, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -135,12 +137,89 @@ def _url_feature_vector(url_input: str, keywords: Sequence[str] = ('verify', 'ac
     ]
 
 
+def _compute_url_hashes(url_input: str) -> list[tuple[bytes, bytes]]:
+    """
+    Compute SHA-256 hash expressions for a URL per Safe Browsing spec.
+    Returns list of (full_hash, 4-byte prefix) tuples for all URL variants.
+    """
+    parsed = urlparse(url_input)
+    host = parsed.netloc.lower()
+    path = parsed.path or "/"
+    
+    # Remove port if present
+    if ":" in host:
+        host = host.split(":")[0]
+    
+    # Generate host suffixes (e.g., a.b.c.com -> [a.b.c.com, b.c.com, c.com])
+    host_parts = host.split(".")
+    suffixes = []
+    for i in range(len(host_parts)):
+        suffix = ".".join(host_parts[i:])
+        if "." in suffix:  # Must have at least one dot
+            suffixes.append(suffix)
+    if host not in suffixes:
+        suffixes.insert(0, host)
+    
+    # Generate path prefixes (e.g., /a/b/c -> [/, /a/, /a/b/, /a/b/c])
+    path_prefixes = ["/"]
+    if path != "/":
+        parts = path.split("/")
+        current = ""
+        for part in parts[1:]:  # Skip empty first element
+            current += "/" + part
+            if current.endswith("/"):
+                path_prefixes.append(current)
+            else:
+                path_prefixes.append(current + "/")
+                path_prefixes.append(current)
+    
+    # Remove duplicates and keep order
+    path_prefixes = list(dict.fromkeys(path_prefixes))
+    
+    # Compute hashes for all combinations
+    hashes = []
+    for suffix in suffixes[:5]:  # Limit to 5 host suffixes
+        for prefix in path_prefixes[:6]:  # Limit to 6 path prefixes
+            expression = suffix + prefix.rstrip("/")
+            if not expression.endswith("/") and prefix == "/":
+                expression = suffix + "/"
+            else:
+                expression = suffix + prefix
+            full_hash = hashlib.sha256(expression.encode()).digest()
+            hash_prefix = full_hash[:4]  # 4-byte prefix
+            hashes.append((full_hash, hash_prefix))
+    
+    # Deduplicate by prefix
+    seen = set()
+    unique = []
+    for full, prefix in hashes:
+        if prefix not in seen:
+            seen.add(prefix)
+            unique.append((full, prefix))
+    
+    return unique
+
+
 def _safe_browsing_lookup(url_input: str, api_key: str) -> Dict[str, str]:
-    endpoint = "https://safebrowsing.googleapis.com/v5alpha1/urls:search"
+    """
+    Look up URL in Safe Browsing using the v5alpha1 hashes:search endpoint.
+    This requires computing URL hash prefixes locally and sending them.
+    """
+    # Compute all hash prefixes for URL expressions
+    url_hashes = _compute_url_hashes(url_input)
+    if not url_hashes:
+        return {"label": "benign", "confidence": 0.5}
+    
+    # Build the hash prefixes parameter (base64-encoded, as separate params)
+    hash_prefixes_b64 = [base64.b64encode(prefix).decode('ascii') for _, prefix in url_hashes]
+    
+    endpoint = "https://safebrowsing.googleapis.com/v5alpha1/hashes:search"
+    # Pass hashPrefixes as a list for multiple values
     params = {
         "key": api_key,
-        "urls": url_input
+        "hashPrefixes": hash_prefixes_b64
     }
+    
     headers = {"Accept": "application/x-protobuf"}
 
     response = requests.get(endpoint, params=params, headers=headers, timeout=10)
@@ -148,7 +227,8 @@ def _safe_browsing_lookup(url_input: str, api_key: str) -> Dict[str, str]:
 
     payload = response.content
     if not payload:
-        raise RuntimeError("Safe Browsing response was empty")
+        # Empty response means no threats found
+        return {"label": "benign", "confidence": 0.89}
 
     search_response = safebrowsing_pb2.SearchHashesResponse()
     try:
@@ -160,9 +240,17 @@ def _safe_browsing_lookup(url_input: str, api_key: str) -> Dict[str, str]:
     if not search_response.full_hashes:
         return {"label": "benign", "confidence": 0.89}
 
-    full_hash = search_response.full_hashes[0]
-    label, confidence = _interpret_safebrowsing_match(full_hash)
-    return {"label": label, "confidence": confidence}
+    # Check if any returned full hash matches our computed full hashes
+    our_full_hashes = {full_hash for full_hash, _ in url_hashes}
+    
+    for returned_hash in search_response.full_hashes:
+        if returned_hash.full_hash in our_full_hashes:
+            # Found a match - URL is flagged
+            label, confidence = _interpret_safebrowsing_match(returned_hash)
+            return {"label": label, "confidence": confidence}
+    
+    # No full hash match, URL is safe
+    return {"label": "benign", "confidence": 0.89}
 
 
 def _interpret_safebrowsing_match(full_hash) -> tuple[str, float]:
