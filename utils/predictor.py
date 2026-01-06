@@ -87,11 +87,11 @@ def predict_url(url_input: str, model_path="models/url_model.joblib"):
     model = load_model(model_path, model_url)
     return _model_predict(model, [url_input])
 
-def predict_email(sender_email: str, subject: str, body: str, model_path="models/email_model.joblib"):
-    """Predict email content using the cached email model."""
+def predict_email(subject: str, body: str, model_path="models/email_model.joblib"):
+    """Predict email content using the cached email model (subject+body only)."""
     # Use your secret MODEL_EMAIL
     model_url = _env_model_url("EMAIL_MODEL_URL", "MODEL_EMAIL")
     model = load_model(model_path, model_url)
-    content = " ".join(filter(None, [sender_email, subject, body])).strip()
+    content = " ".join(filter(None, [subject, body])).strip()
     payload = [content or "empty"]
     return _model_predict(model, payload)

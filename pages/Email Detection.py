@@ -29,6 +29,7 @@ st.markdown("""
     .safe-alert {
         background-color: #00C851;
         padding: 2rem;
+        margin-bottom: 10px;
         border-radius: 10px;
         text-align: center;
     }
@@ -58,12 +59,12 @@ with tab1:
     col1, col2 = st.columns(2)
     
     with col1:
-        sender_email = st.text_input("Sender Email Address", placeholder="example@domain.com")
         subject = st.text_input("Email Subject", placeholder="Enter email subject")
     
     with col2:
-        sender_name = st.text_input("Sender Name (Optional)", placeholder="John Doe")
-        has_attachments = st.checkbox("Email has attachments")
+        sender_email = st.text_input("Sender Email Address", placeholder="example@domain.com")
+        # sender_name = st.text_input("Sender Name (Optional)", placeholder="John Doe")
+        # has_attachments = st.checkbox("Email has attachments")
     
     email_body = st.text_area(
         "Email Body",
@@ -90,17 +91,16 @@ Security Team"""
         st.rerun()
     
     if analyze_btn:
-        if not email_body or not sender_email:
-            st.error("Please provide at least the sender email and email body!")
+        if not email_body:
+            st.error("Email body is required for analysis")
         else:
-            with st.spinner("Analyzing email... This may take a few seconds."):
-                time.sleep(2)  # Simulating model prediction
+            with st.spinner("Analyzing email..."):
                 
                 suspicious_keywords = ['click here', 'verify', 'confirm', 'urgent', 'account', 'password']
                 displayed_label = 'Unknown'
                 prediction_source = 'model'
                 try:
-                    result = predict_email(sender_email, subject, email_body)
+                    result = predict_email(subject, email_body)
                     model_label = result.get('label', '')
                     confidence = float(result.get('confidence', 0.0))
                     normalized = str(model_label).lower()
@@ -142,9 +142,9 @@ Security Team"""
                 st.markdown(f"**Prediction source:** {prediction_source.capitalize()} | **Label:** {displayed_label}")
             else:
                 st.markdown("""
-                    <div class="safe-alert">
+                    <h4 class="safe-alert">
                         Email Appears Safe
-                    </div>
+                    </h4>
                 """, unsafe_allow_html=True)
                 st.success("This email appears to be legitimate.")
                 st.markdown(f"**Prediction source:** {prediction_source.capitalize()} | **Label:** {displayed_label}")
@@ -181,12 +181,11 @@ Security Team"""
             with col2:
                 st.markdown("#### Email Features")
                 features_df = pd.DataFrame({
-                    'Feature': ['Sender Domain', 'Subject Line', 'URL Count', 'Attachment'],
+                    'Feature': ['Sender Domain', 'Subject Line', 'URL Count'],
                     'Status': [
                         sender_email.split('@')[1] if '@' in sender_email else 'N/A',
                         subject if subject else 'No subject',
-                        str(email_body.count('http')),
-                        'Yes' if has_attachments else 'No'
+                        str(email_body.count('http'))
                     ]
                 })
                 st.dataframe(features_df, use_container_width=True, hide_index=True)
