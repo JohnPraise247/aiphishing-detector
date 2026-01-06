@@ -2,3 +2,4 @@
 /models
 setup_venv.sh
 .streamlit/secrets.toml
+note.txt

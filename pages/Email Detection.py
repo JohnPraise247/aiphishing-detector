@@ -22,14 +22,14 @@ st.markdown("""
         background-color: #ff4444;
         padding: 2rem;
         border-radius: 10px;
-        margin-bottom: 10px;
+        margin-bottom: 10px!important;
         text-align: center;
         animation: pulse 2s infinite;
     }
     .safe-alert {
         background-color: #00C851;
         padding: 2rem;
-        margin-bottom: 10px;
+        margin-bottom: 10px!important;
         border-radius: 10px;
         text-align: center;
     }
@@ -91,14 +91,13 @@ Security Team"""
         st.rerun()
     
     if analyze_btn:
-        if not email_body:
+        if not email_body or not email_body.strip():
             st.error("Email body is required for analysis")
         else:
             with st.spinner("Analyzing email..."):
                 
                 suspicious_keywords = ['click here', 'verify', 'confirm', 'urgent', 'account', 'password']
                 displayed_label = 'Unknown'
-                prediction_source = 'model'
                 try:
                     result = predict_email(subject, email_body)
                     model_label = result.get('label', '')
@@ -115,18 +114,12 @@ Security Team"""
                         displayed_label = model_label
                 except FileNotFoundError:
                     logging.exception("Email model is missing")
-                    st.warning("Email model not found. Falling back to heuristic detection.")
-                    prediction_source = 'heuristic'
-                    is_spam = any(keyword in email_body.lower() for keyword in suspicious_keywords)
-                    confidence = 0.87 if is_spam else 0.92
-                    displayed_label = 'Spam' if is_spam else 'Real'
+                    st.error("Email model not found. Please check that the model is downloaded and configured correctly.")
+                    st.stop()
                 except Exception as err:
                     logging.exception("Email model prediction failed")
-                    st.warning(f"Email prediction failed ({err}). Using heuristic fallback.")
-                    prediction_source = 'heuristic'
-                    is_spam = any(keyword in email_body.lower() for keyword in suspicious_keywords)
-                    confidence = 0.87 if is_spam else 0.92
-                    displayed_label = 'Spam' if is_spam else 'Real'
+                    st.error(f"Email prediction failed ({err}).")
+                    st.stop()
                 
             st.markdown("---")
             st.markdown("## Analysis Results")
@@ -139,7 +132,7 @@ Security Team"""
                         </h4>
                 """, unsafe_allow_html=True)
                 st.error("This email shows strong indicators of being a phishing attempt!")
-                st.markdown(f"**Prediction source:** {prediction_source.capitalize()} | **Label:** {displayed_label}")
+                st.markdown(f"**Label:** {displayed_label}")
             else:
                 st.markdown("""
                     <h4 class="safe-alert">
@@ -147,12 +140,12 @@ Security Team"""
                     </h4>
                 """, unsafe_allow_html=True)
                 st.success("This email appears to be legitimate.")
-                st.markdown(f"**Prediction source:** {prediction_source.capitalize()} | **Label:** {displayed_label}")
+                st.markdown(f"**Label:** {displayed_label}")
             
-            # Confidence score
-            st.markdown("### Confidence Score")
-            st.progress(confidence)
-            st.metric("Detection Confidence", f"{confidence * 100:.1f}%")
+            # # Confidence score (hidden while model-only output is prioritized)
+            # st.markdown("### Confidence Score")
+            # st.progress(confidence)
+            # st.metric("Detection Confidence", f"{confidence * 100:.1f}%")
             
             # Detailed analysis
             st.markdown("### Detailed Analysis")
@@ -169,12 +162,14 @@ Security Team"""
                     indicators.append("Urgency/verification requests")
                 if "http://" in email_body:
                     indicators.append("Non-secure HTTP links detected")
-                if not sender_email.endswith(('.com', '.org', '.edu', '.gov')):
-                    indicators.append("Suspicious sender domain")
+                if any(word in email_body.lower() for word in ["urgent", "immediately", "act now"]):
+                    indicators.append("Urgency language detected")
+                if any(word in email_body.lower() for word in ["password", "credit card", "ssn", "bank account"]):
+                    indicators.append("Sensitive information request")
                 
                 if indicators:
                     for indicator in indicators:
-                        st.markdown(indicator)
+                        st.markdown(f"- {indicator}")
                 else:
                     st.markdown("No major risk indicators found")
             
@@ -238,19 +233,20 @@ with tab2:
 
 with tab3:
     st.markdown("### Batch Email Analysis")
-    st.info("Upload a CSV file with multiple emails for bulk analysis")
+    st.info("Upload a CSV file with subject and body text for bulk scoring. Sender metadata is not required.")
     
     st.markdown("""
     **CSV Format Required:**
-    - Column 1: `sender_email`
-    - Column 2: `subject`
-    - Column 3: `body`
+    - Column 1: `subject`
+    - Column 2: `body`
     """)
     
     sample_data = pd.DataFrame({
-        'sender_email': ['user1@example.com', 'admin@bank.com'],
-        'subject': ['Hello', 'Verify your account'],
-        'body': ['Just checking in...', 'Click here to verify now!']
+        'subject': ['Hello from support', 'Verify your account'],
+        'body': [
+            'Just checking in to see how things are going.',
+            'We detected suspicious activity. Click here to verify your account now!'
+        ]
     })
     
     st.download_button(

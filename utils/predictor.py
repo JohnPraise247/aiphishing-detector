@@ -64,15 +64,37 @@ def _model_predict(model, payload):
     return {'label': label, 'confidence': confidence}
 
 def _calculate_confidence(model, payload, label):
+    """
+    Calculate confidence for the predicted label.
+    Handles models with predict_proba, decision_function, or neither.
+    """
     try:
+        # 1) Try predict_proba first (returns class probabilities)
         if hasattr(model, 'predict_proba'):
             probs = model.predict_proba(payload)[0]
             if hasattr(model, 'classes_'):
-                classes = list(model.classes_)
+                classes = [str(c) for c in model.classes_]  # normalize to str
                 if label in classes:
                     return float(probs[classes.index(label)])
+            # Fallback: return max probability
             return float(max(probs))
+
+        # 2) Try decision_function (SVM, etc.) and convert to pseudo-probability
+        if hasattr(model, 'decision_function'):
+            decision = model.decision_function(payload)[0]
+            # Handle binary or multi-class
+            if hasattr(decision, '__iter__'):
+                score = float(max(decision))
+            else:
+                score = float(decision)
+            # Sigmoid to map unbounded score to 0-1 range
+            import math
+            confidence = 1 / (1 + math.exp(-score))
+            return confidence
+
+        # 3) No probability method available; return neutral confidence
         return 0.5
+
     except Exception as e:
         logging.exception("Confidence calculation raised an exception")
         return 0.5

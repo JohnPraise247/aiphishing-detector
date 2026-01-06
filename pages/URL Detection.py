@@ -26,7 +26,7 @@ st.markdown("""
     .url-safe {
         background: linear-gradient(135deg, #00C851 0%, #007E33 100%);
         padding: 2rem;
-        margin-bottom: 10px;
+        margin-bottom: 10px!important;
         border-radius: 15px;
         text-align: center;
     }
@@ -34,7 +34,7 @@ st.markdown("""
         background: #cc0000;/*#ff4444;*/
         padding: 2rem;
         border-radius: 15px;
-        margin-bottom: 10px;
+        margin-bottom: 10px!important;
         text-align: center;
         animation: shake 0.5s;
     }
@@ -97,7 +97,6 @@ with tab1:
                 
                 suspicious_keywords = ['verify', 'account', 'login', 'secure', 'update', 'confirm']
                 displayed_label = 'Unknown'
-                prediction_source = 'model'
                 try:
                     result = predict_url(url_input)
                     model_label = result.get('label', '').lower()
@@ -106,22 +105,12 @@ with tab1:
                     displayed_label = model_label.capitalize() if model_label else 'Unknown'
                 except FileNotFoundError as err:
                     logging.exception("Model file missing")
-                    st.warning("Model file not found. Using heuristic fallback.")
-                    prediction_source = 'heuristic'
-                    is_phishing = any(keyword in url_input.lower() for keyword in suspicious_keywords)
-                    is_phishing = is_phishing or parsed.scheme == 'http'
-                    is_phishing = is_phishing or len(domain.split('.')) > 3
-                    confidence = 0.89 if is_phishing else 0.94
-                    displayed_label = 'Phishing' if is_phishing else 'Safe'
+                    st.error("URL model not found. Please ensure the model is downloaded and configured.")
+                    st.stop()
                 except Exception as err:
                     logging.exception("Model prediction error")
-                    st.warning(f"Model prediction failed: {err}. Using heuristic fallback.")
-                    prediction_source = 'heuristic'
-                    is_phishing = any(keyword in url_input.lower() for keyword in suspicious_keywords)
-                    is_phishing = is_phishing or parsed.scheme == 'http'
-                    is_phishing = is_phishing or len(domain.split('.')) > 3
-                    confidence = 0.89 if is_phishing else 0.94
-                    displayed_label = 'Phishing' if is_phishing else 'Safe'
+                    st.error(f"Model prediction failed: {err}.")
+                    st.stop()
             
             st.markdown("---")
             st.markdown("#### URL Analysis Results")
