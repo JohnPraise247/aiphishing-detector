@@ -99,7 +99,7 @@ with tab1:
                 displayed_label = 'Unknown'
                 prediction_source = 'model'
                 try:
-                    result = predict_url(url_input, model_path='models/url_model.joblib')
+                    result = predict_url(url_input)
                     model_label = result.get('label', '').lower()
                     confidence = float(result.get('confidence', 0.0))
                     is_phishing = model_label in ('phishing', 'malware', 'defacement')

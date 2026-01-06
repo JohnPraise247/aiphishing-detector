@@ -1,33 +1,58 @@
-import logging
-from joblib import load
 import os
-from typing import Dict
+import logging
+from typing import Dict, Optional
+import joblib
+import streamlit as st
+import gdown
 
+# Cache loaded models
 _MODEL_CACHE: Dict[str, object] = {}
 
-def load_model(path='models/model.joblib'):
-    if path in _MODEL_CACHE:
-        return _MODEL_CACHE[path]
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Model file not found at '{path}'. Place your model.joblib file at this path.")
-    model = load(path)
-    _MODEL_CACHE[path] = model
+# -----------------------------
+# Helper: download model if missing
+# -----------------------------
+def ensure_model(local_path: str, url: Optional[str] = None):
+    """Download the model from URL if it doesn't exist locally."""
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    if url and not os.path.exists(local_path):
+        logging.info(f"Downloading model from {url} to {local_path}...")
+        gdown.download(url, local_path, quiet=False)
+    elif not os.path.exists(local_path):
+        raise FileNotFoundError(f"Model file not found at '{local_path}' and no URL provided.")
+
+# -----------------------------
+# Helper: get secret or env var
+# -----------------------------
+def _env_model_url(env_var: str, secret_key: Optional[str] = None) -> Optional[str]:
+    """Get URL from environment variable or Streamlit secret."""
+    value = os.getenv(env_var)
+    if value:
+        return value
+    if secret_key:
+        try:
+            return st.secrets.get(secret_key)
+        except Exception:
+            pass
+    return None
+
+# -----------------------------
+# Load model with caching
+# -----------------------------
+def load_model(local_path: str, url: Optional[str] = None):
+    """Load a model from local path; download from URL if needed."""
+    if local_path in _MODEL_CACHE:
+        return _MODEL_CACHE[local_path]
+
+    ensure_model(local_path, url)
+    model = joblib.load(local_path)
+    _MODEL_CACHE[local_path] = model
     return model
 
-def predict_url(url, model_path='models/url_model.joblib'):
-    """Predict a single URL with the cached model."""
-    model = load_model(model_path)
-    return _model_predict(model, [url])
-
-def predict_email(sender_email: str, subject: str, body: str, model_path='models/email_model.joblib'):
-    """Predict email content using the specified model."""
-    model = load_model(model_path)
-    content = " ".join(filter(None, [sender_email, subject, body])).strip()
-    payload = [content or "empty"]
-    return _model_predict(model, payload)
-
+# -----------------------------
+# Prediction helpers
+# -----------------------------
 def _model_predict(model, payload):
-    """Run `predict` and optionally `predict_proba` on the given payload."""
+    """Run model.predict and optionally predict_proba on payload."""
     try:
         pred = model.predict(payload)
         label = str(pred[0])
@@ -51,3 +76,22 @@ def _calculate_confidence(model, payload, label):
     except Exception as e:
         logging.exception("Confidence calculation raised an exception")
         return 0.5
+
+# -----------------------------
+# Public API
+# -----------------------------
+def predict_url(url_input: str, model_path="models/url_model.joblib"):
+    """Predict a single URL with the cached URL model."""
+    # Use your secret MODEL_URL
+    model_url = _env_model_url("URL_MODEL_URL", "MODEL_URL")
+    model = load_model(model_path, model_url)
+    return _model_predict(model, [url_input])
+
+def predict_email(sender_email: str, subject: str, body: str, model_path="models/email_model.joblib"):
+    """Predict email content using the cached email model."""
+    # Use your secret MODEL_EMAIL
+    model_url = _env_model_url("EMAIL_MODEL_URL", "MODEL_EMAIL")
+    model = load_model(model_path, model_url)
+    content = " ".join(filter(None, [sender_email, subject, body])).strip()
+    payload = [content or "empty"]
+    return _model_predict(model, payload)

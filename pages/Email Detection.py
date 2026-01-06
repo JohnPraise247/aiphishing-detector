@@ -100,12 +100,7 @@ Security Team"""
                 displayed_label = 'Unknown'
                 prediction_source = 'model'
                 try:
-                    result = predict_email(
-                        sender_email,
-                        subject,
-                        email_body,
-                        model_path='models/email_model.joblib'
-                    )
+                    result = predict_email(sender_email, subject, email_body)
                     model_label = result.get('label', '')
                     confidence = float(result.get('confidence', 0.0))
                     normalized = str(model_label).lower()
