@@ -53,7 +53,13 @@ st.markdown('<h1>AI-Based Phishing Email and Website Detection System Using Mach
 
 st.markdown("""
 #### About this project
-We combine a pretrained email classifier with a trusted URL reputation check so every submission (single or batch) gets a hardened ML/API verdict plus risk indicators and recommendations.
+This system leverages machine learning and advanced pattern analysis to detect phishing threats across emails and URLs. Our multi-layered approach combines:
+- **Email Analysis**: Pretrained ML classifier examines subject lines and body content for phishing patterns
+- **URL Intelligence**: Real-time reputation scoring, reachability probes, and threat database lookups
+- **Comprehensive Risk Detection**: 13+ checks including typosquatting, homograph attacks, suspicious TLDs, URL shorteners, non-standard ports, and brand impersonation
+- **Batch Processing**: Analyze multiple emails or URLs simultaneously with detailed reporting
+
+Every submission receives a risk score, specific threat indicators, and actionable security recommendations.
 """, unsafe_allow_html=True)
 
 # Hero section
@@ -103,30 +109,30 @@ col1, col2 = st.columns(2)
 with col1:
     st.markdown("""
     <div class="feature-box">
-        <h5>Email Model</h5>
-        <p>Subject/body content is scored by the pretrained email classifier.</p>
+        <h5>Email Analysis</h5>
+        <p>ML-powered classification of email content with pattern recognition for phishing indicators.</p>
     </div>
     """, unsafe_allow_html=True)
     
     st.markdown("""
     <div class="feature-box">
-        <h5>Live Prediction</h5>
-        <p>The UI makes the Safe Browsing or email call directly—no heuristics.</p>
+        <h5>Advanced Threat Detection</h5>
+        <p>Typosquatting, homograph attacks, suspicious TLDs, URL shorteners, and 13+ security checks.</p>
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
     st.markdown("""
     <div class="feature-box">
-        <h5>URL Safety</h5>
-        <p>Each URL is vetted by an external reputation service.</p>
+        <h5>URL Reputation</h5>
+        <p>Real-time threat database lookups, DNS resolution, redirect analysis, and TLS validation.</p>
     </div>
     """, unsafe_allow_html=True)
     
     st.markdown("""
     <div class="feature-box">
         <h5>Detailed Reports</h5>
-        <p>Risk indicators and recommendations are surfaced.</p>
+        <p>Comprehensive risk scoring, specific indicators, redirect chains, and security recommendations.</p>
     </div>
     """, unsafe_allow_html=True)
 

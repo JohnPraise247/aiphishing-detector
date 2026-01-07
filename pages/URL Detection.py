@@ -58,6 +58,12 @@ SUSPICIOUS_TLDS = {
     ".cc", ".su", ".buzz", ".work", ".click", ".link", ".info",
 }
 
+URL_SHORTENERS = {
+    "bit.ly", "tinyurl.com", "goo.gl", "ow.ly", "short.link", "t.co",
+    "is.gd", "buff.ly", "adf.ly", "bit.do", "lnkd.in", "shorte.st",
+    "rb.gy", "cutt.ly", "tiny.cc", "shorturl.at", "s.id",
+}
+
 # Homograph confusables: maps lookalike chars to their ASCII equivalents
 HOMOGRAPH_MAP = {
     '0': 'o', 'о': 'o', 'ο': 'o',  # Cyrillic/Greek о, digit 0
@@ -141,6 +147,23 @@ def _check_excessive_dashes_numbers(netloc: str) -> tuple[bool, bool]:
     return excessive_dashes, excessive_numbers
 
 
+def _is_url_shortener(netloc: str) -> bool:
+    host = netloc.split(':')[0].lower()
+    return host in URL_SHORTENERS or host.startswith('www.') and host[4:] in URL_SHORTENERS
+
+
+def _has_non_standard_port(netloc: str) -> int | None:
+    if ':' in netloc:
+        try:
+            port = int(netloc.split(':')[1])
+            # Standard ports: 80 (HTTP), 443 (HTTPS), 8080 (alt HTTP), 8443 (alt HTTPS)
+            if port not in {80, 443, 8080, 8443}:
+                return port
+        except (ValueError, IndexError):
+            pass
+    return None
+
+
 def _compute_risk_indicators(parsed, url_input):
     risk_indicators = []
     risk_score = 0
@@ -171,6 +194,32 @@ def _compute_risk_indicators(parsed, url_input):
     if len(parsed.netloc) > 30:
         risk_indicators.append("Unusually long domain name")
         risk_score += 10
+
+    # Full URL length check (stricter threshold)
+    if len(url_input) > 75:
+        risk_indicators.append(f"Suspiciously long URL ({len(url_input)} characters)")
+        risk_score += 20
+
+    # URL shortener check
+    if _is_url_shortener(parsed.netloc):
+        risk_indicators.append("URL shortener detected (hides final destination)")
+        risk_score += 30
+
+    # Non-standard port check
+    non_standard_port = _has_non_standard_port(parsed.netloc)
+    if non_standard_port:
+        risk_indicators.append(f"Non-standard port: {non_standard_port}")
+        risk_score += 25
+
+    # Double slashes in path
+    if '//' in parsed.path:
+        risk_indicators.append("Double slashes in URL path (path manipulation)")
+        risk_score += 20
+
+    # IP address instead of domain
+    if is_ip:
+        risk_indicators.append("Using IP address instead of domain name")
+        risk_score += 25
 
     # Suspicious TLD check
     suspicious_tld = _check_suspicious_tld(parsed.netloc)
