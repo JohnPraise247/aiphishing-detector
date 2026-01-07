@@ -7,7 +7,15 @@ from urllib.parse import urlparse
 import logging
 
 from utils.styles import load_custom_font
-from utils.predictor import predict_url
+from utils.predictor import predict_url, probe_url
+
+def _normalize_host(raw_input: str) -> str:
+    cleaned = raw_input.strip()
+    cleaned = re.sub(r'^(https?://)', '', cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+def _normalize_host_input():
+    st.session_state["website_url"] = _normalize_host(st.session_state.get("website_url", ""))
 
 st.set_page_config(
     page_title="URL Detection", 
@@ -59,14 +67,53 @@ st.markdown("Check if a website is safe to visit using live reputation scoring f
 # Main tabs
 tab1, tab2 = st.tabs(["Single URL Check", "Batch URL Analysis"])
 
+
+def _render_reachability_summary(reachability: dict):
+    reach_status = "Reachable" if reachability.get('reachable') else "Unreachable"
+    status_code = reachability.get('status_code')
+    response_time = reachability.get('response_time_ms')
+    final_url = reachability.get('final_url')
+    redirects = reachability.get('redirects') or []
+    tls_status = reachability.get('tls_valid')
+    tls_text = "Valid" if tls_status else ("Invalid" if tls_status is False else "Unknown")
+
+    reach_col1, reach_col2, reach_col3 = st.columns(3)
+    with reach_col1:
+        st.metric("Reachability", reach_status)
+        st.metric("HTTP Status", f"{status_code}" if status_code else "N/A")
+    with reach_col2:
+        st.metric("Response Time", f"{response_time} ms" if response_time else "N/A")
+        st.metric("TLS Status", tls_text)
+    with reach_col3:
+        st.metric("Final URL", final_url or "N/A")
+        st.metric("Redirects", f"{len(redirects)} hops" if redirects else "0 hops")
+
+    if reachability.get('status_message'):
+        st.caption(f"Server message: {reachability.get('status_message')}")
+    if redirects or final_url:
+        chain = redirects + ([final_url] if final_url else [])
+        st.caption(f"Redirect chain: {' ➝ '.join(chain)}")
+    if reachability.get('error'):
+        st.warning(f"Reachability error: {reachability.get('error')}")
+
 with tab1:
     st.markdown("#### Enter URL to Analyze")
     
-    url_input = st.text_input(
-        "Website URL",
-        placeholder="https://example.com",
-        help="Enter the complete URL including http:// or https://"
-    )
+    scheme_col, url_col = st.columns([0.7, 3])
+    with scheme_col:
+        scheme = st.selectbox("Scheme", ["https://", "http://"], index=0, help="Select the protocol to prefix the hostname.")
+    if "website_url" not in st.session_state:
+        st.session_state["website_url"] = ""
+    with url_col:
+        st.text_input(
+            "Website URL",
+            placeholder="example.com",
+            help="Enter the hostname without the protocol.",
+            key="website_url",
+            on_change=_normalize_host_input
+        )
+    normalized_host = st.session_state.get("website_url", "")
+    url_input = f"{scheme}{normalized_host}" if normalized_host else ""
     
     col1, col2, col3 = st.columns([1, 1, 2])
     
@@ -81,19 +128,35 @@ with tab1:
         elif not url_input.startswith(('http://', 'https://')):
             st.warning("URL should start with http:// or https://")
         else:
-            with st.spinner("Analyzing URL..."):
-                time.sleep(2)
+            spinner = st.spinner("Analyzing URL...")
+            spinner.__enter__()
+            spinner_active = True
+            try:
                 parsed = urlparse(url_input)
                 domain = parsed.netloc
 
+                reachability = probe_url(url_input)
+                if not reachability.get('reachable'):
+                    spinner.__exit__(None, None, None)
+                    spinner_active = False
+                    st.warning(
+                        "Hostname is not reachable; ensure the domain resolves and responds before re-running the check."
+                    )
+                    _render_reachability_summary(reachability)
+                    st.stop()
+
                 try:
-                    result = predict_url(url_input)
+                    result = predict_url(url_input, reachability=reachability)
                     model_label = result.get('label', 'benign').lower()
                     confidence = float(result.get('confidence', 0.0))
+                    reachability = result.get('reachability', reachability)
                 except Exception:
                     logging.exception("URL prediction failed")
                     st.error("URL prediction failed. Please try again shortly.")
                     st.stop()
+            finally:
+                if spinner_active:
+                    spinner.__exit__(None, None, None)
 
             is_phishing = model_label != 'benign'
             displayed_label = model_label.replace('_', ' ').title()
@@ -205,7 +268,7 @@ with tab1:
                 if len(domain) > 30:
                     risk_indicators.append("Unusually long domain name")
                     risk_score += 10
-                
+
                 if risk_indicators:
                     for indicator in risk_indicators:
                         st.markdown(f"<div class='feature-card'>{indicator}</div>", unsafe_allow_html=True)
@@ -218,7 +281,7 @@ with tab1:
                     st.progress(0.0)
             
             # URL Features Summary
-            st.markdown("#### Feature Analysis Summary")
+            st.markdown("\n#### Feature Analysis Summary", unsafe_allow_html=True)
             
             feature_col1, feature_col2, feature_col3, feature_col4 = st.columns(4)
             
@@ -254,19 +317,19 @@ with tab1:
                 """)
             
             # Additional Info
-            with st.expander("Technical Details"):
-                st.json({
-                    "url": url_input,
-                    "protocol": parsed.scheme,
-                    "domain": domain,
-                    "path": parsed.path,
-                    "query": parsed.query if parsed.query else "None",
-                    "has_https": parsed.scheme == "https",
-                    "subdomain_count": len(domain.split('.')) - 1,
-                    "url_length": len(url_input),
-                    "prediction": "Phishing" if is_phishing else "Safe",
-                    # "confidence": f"{confidence * 100:.2f}%"
-                })
+            # with st.expander("Technical Details"):
+            #     st.json({
+            #         "url": url_input,
+            #         "protocol": parsed.scheme,
+            #         "domain": domain,
+            #         "path": parsed.path,
+            #         "query": parsed.query if parsed.query else "None",
+            #         "has_https": parsed.scheme == "https",
+            #         "subdomain_count": len(domain.split('.')) - 1,
+            #         "url_length": len(url_input),
+            #         "prediction": "Phishing" if is_phishing else "Safe",
+            #         # "confidence": f"{confidence * 100:.2f}%"
+            #     })
 
 with tab2:
     st.markdown("### Batch URL Analysis")
@@ -330,23 +393,32 @@ with tab2:
                     prediction = predict_url(url)
                     label = prediction.get('label', 'benign').lower()
                     confidence = float(prediction.get('confidence', 0.0))
+                    reachability = prediction.get('reachability', {})
                 except Exception:
                     logging.exception("Batch URL prediction failed")
                     errors.append(f"Failed to classify {url}")
                     label = 'unknown'
                     confidence = 0.0
+                    reachability = {}
 
                 is_phishing = label != 'benign'
-                status = 'Phishing' if is_phishing else 'Safe'
-                if label == 'unknown':
-                    status = 'Error'
-                
+                reachable = reachability.get('reachable', True)
+                if not reachable:
+                    status = 'Unreachable'
+                    risk_level = 'Unknown'
+                else:
+                    status = 'Phishing' if is_phishing else 'Safe'
+                    if label == 'unknown':
+                        status = 'Error'
+                    risk_level = 'High' if is_phishing else 'Low'
+
                 results.append({
                     'URL': url[:50] + '...' if len(url) > 50 else url,
                     'Status': status,
                     'Prediction Label': label.replace('_', ' ').title(),
+                    'Reachability': 'Reachable' if reachable else 'Unreachable',
                     # 'Confidence': f"{confidence * 100:.1f}%",
-                    'Risk Level': 'High' if is_phishing else 'Low'
+                    'Risk Level': risk_level
                 })
 
             st.success(f"Analysis complete! Processed {len(urls_to_check)} URLs")

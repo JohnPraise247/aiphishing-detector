@@ -2,13 +2,16 @@ import os
 import logging
 import hashlib
 import base64
-from typing import Dict, Optional, Sequence
+import socket
+import ssl
+from typing import Any, Dict, Optional, Sequence
 from urllib.parse import urlparse
 
 import joblib
 import streamlit as st
 import gdown
 import requests
+from requests.exceptions import RequestException, SSLError
 from google.protobuf.message import DecodeError
 
 from utils.google.security.safebrowsing.v5alpha1 import safebrowsing_pb2
@@ -200,6 +203,79 @@ def _compute_url_hashes(url_input: str) -> list[tuple[bytes, bytes]]:
     return unique
 
 
+def _check_tls_certificate(host: str, port: int) -> bool:
+    """Verify TLS certificate by establishing an SSL socket handshake."""
+    try:
+        addr_info = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        family, _, _, _, sockaddr = addr_info[0]
+        context = ssl.create_default_context()
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        with context.wrap_socket(socket.socket(family), server_hostname=host) as sock:
+            sock.settimeout(5)
+            sock.connect(sockaddr)
+            sock.getpeercert()
+        return True
+    except Exception:
+        return False
+
+
+def _probe_url(url_input: str) -> Dict[str, Any]:
+    """Perform DNS resolution and an HTTP probe to record reachability metadata."""
+    parsed = urlparse(url_input)
+    host = parsed.hostname
+    scheme = parsed.scheme
+    port = parsed.port or (443 if scheme == 'https' else 80)
+
+    probe_result: Dict[str, Any] = {
+        'reachable': False,
+        'status_code': None,
+        'status_message': None,
+        'final_url': None,
+        'redirect_count': 0,
+        'redirects': [],
+        'response_time_ms': None,
+        'error': None,
+        'tls_valid': None
+    }
+
+    if not host:
+        probe_result['error'] = 'Invalid URL: missing host'
+        return probe_result
+
+    try:
+        socket.getaddrinfo(host, port)
+    except socket.gaierror as exc:
+        probe_result['error'] = f'DNS resolution failed: {exc}'
+        return probe_result
+
+    try:
+        with requests.Session() as session:
+            response = session.head(url_input, allow_redirects=True, timeout=6)
+            if response.status_code in (405, 501):
+                response = session.get(url_input, stream=True, allow_redirects=True, timeout=6)
+    except (RequestException, SSLError) as exc:
+        probe_result['error'] = str(exc)
+        if isinstance(exc, SSLError):
+            probe_result['tls_valid'] = False
+        return probe_result
+
+    probe_result.update({
+        'reachable': True,
+        'status_code': response.status_code,
+        'status_message': response.reason,
+        'final_url': response.url,
+        'redirect_count': len(response.history),
+        'redirects': [resp.url for resp in response.history],
+        'response_time_ms': int(response.elapsed.total_seconds() * 1000)
+    })
+
+    if scheme == 'https':
+        probe_result['tls_valid'] = _check_tls_certificate(host, port)
+
+    return probe_result
+
+
 def _safe_browsing_lookup(url_input: str, api_key: str) -> Dict[str, str]:
     """
     Look up URL in Safe Browsing using the v5alpha1 hashes:search endpoint.
@@ -214,7 +290,6 @@ def _safe_browsing_lookup(url_input: str, api_key: str) -> Dict[str, str]:
     hash_prefixes_b64 = [base64.b64encode(prefix).decode('ascii') for _, prefix in url_hashes]
     
     endpoint = "https://safebrowsing.googleapis.com/v5alpha1/hashes:search"
-    # Pass hashPrefixes as a list for multiple values
     params = {
         "key": api_key,
         "hashPrefixes": hash_prefixes_b64
@@ -277,16 +352,34 @@ def _interpret_safebrowsing_match(full_hash) -> tuple[str, float]:
     return label, confidence
 
 
-def predict_url(url_input: str, model_path=None):
+def predict_url(url_input: str, model_path=None, reachability: Optional[Dict[str, Any]] = None):
     """Use Google Safe Browsing to classify a single URL."""
     api_key = _env_model_url("SAFE_BROWSING_API_KEY", "SAFE_BROWSING_API_KEY")
     if not api_key:
         raise RuntimeError("SAFE_BROWSING_API_KEY is required for URL predictions.")
+
+    if reachability is None:
+        reachability = _probe_url(url_input)
+    else:
+        reachability = reachability if isinstance(reachability, dict) else {}
+
+    if not reachability.get('reachable'):
+        # Skip Safe Browsing lookup when the host is not reachable
+        return {"label": "unreachable", "confidence": 0.0, "reachability": reachability}
+
     try:
-        return _safe_browsing_lookup(url_input, api_key)
+        sb_result = _safe_browsing_lookup(url_input, api_key)
     except requests.RequestException as exc:
         logging.exception("Safe Browsing lookup failed")
         raise RuntimeError(f"Model prediction failed: {exc}")
+
+    sb_result['reachability'] = reachability
+    return sb_result
+
+
+def probe_url(url_input: str) -> Dict[str, Any]:
+    """Expose the reachability probe so the UI can pre-check the hostname."""
+    return _probe_url(url_input)
 
 def predict_email(subject: str, body: str, model_path="models/email_model.joblib"):
     """Predict email content using the cached email model (subject+body only)."""
