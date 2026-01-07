@@ -117,7 +117,7 @@ with col1:
     st.markdown("""
     <div class="feature-box">
         <h5>Advanced Threat Detection</h5>
-        <p>Typosquatting, homograph attacks, suspicious TLDs, URL shorteners, and 13+ security checks.</p>
+        <p>Typosquatting, homograph attacks, suspicious TLDs, URL shorteners, and 15+ security checks.</p>
     </div>
     """, unsafe_allow_html=True)
 
